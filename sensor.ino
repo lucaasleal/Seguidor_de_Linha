@@ -1,14 +1,22 @@
 #include <QTRSensors.h>
 
+#define PINO_IN1 18  // Pino responsável pelo controle no sentido horário - M1
+#define PINO_IN3 19  // Pino responsável pelo controle no sentido horário - M2
+
 const uint8_t SensorCount = 8;
 unsigned int sensorValues[SensorCount];
 
 // pinos dos sensores (ajuste conforme seu hardware)
 QTRSensorsRC qtr((unsigned char[]){2, 0, 4, 5, 6, 7, 8, 9}, SensorCount, 2000, 10);
 
+
+
 void setup() {
   Serial.begin(9600);
   delay(500);
+
+  pinMode(PINO_IN1, OUTPUT);
+  pinMode(PINO_IN3, OUTPUT);
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH); // LED aceso durante calibração
@@ -52,9 +60,32 @@ void loop() {
     Serial.print(sensorValues[i]);
     Serial.print('\t');
   }
+  Serial.println("\n");
 
-  Serial.print(" | Posicao: ");
-  Serial.println(position);
+  for (uint8_t i = 0; i < SensorCount; i++) {
+    sensorValues[i] = !(sensorValues[i]<900);
+  }
+  
+  int pound = 0;
+  for(int i=1; i<5; i++){
+    pound -= sensorValues[i-1]* i;
+  }
+  for(int i=1; i<5; i++){
+    pound += sensorValues[i+3]* i;
+  }
 
-  delay(1000);
+  int velocidade = 50;
+  int ganho = 50;
+  int correcao = pound * ganho;
+
+  int velEsquerda = velocidade - correcao;
+  int velDireita  = velocidade + correcao;
+
+  velEsquerda = constrain(velEsquerda, 0, 255);
+  velDireita  = constrain(velDireita, 0, 255);
+
+  analogWrite(PINO_IN1, velEsquerda-100);
+  analogWrite(PINO_IN3, velDireita+100);
+  
+  delay(50);
 }
