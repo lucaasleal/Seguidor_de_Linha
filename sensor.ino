@@ -1,160 +1,116 @@
 #include <QTRSensors.h>
 
-// --- Pinos do Motor ---
-#define PINO_IN1 18  // Pino PWM responsável pelo Motor 1
-#define PINO_IN3 19  // Pino PWM responsável pelo Motor 2
-// (Nota: Verifique se sua ponte-H precisa de pinos IN2 e IN4 para direção)
+#define PINO_IN1 18  // Pino responsável pelo controle no sentido horário - M1
+#define PINO_IN2 19  // Pino responsável pelo controle no sentido anti - horário - M1
+#define PINO_IN3 20  // Pino responsável pelo controle no sentido anti-horário - M2
+#define PINO_IN4 21  // Pino responsável pelo controle no sentido horário - M2
 
-// --- Configuração dos Sensores ---
 const uint8_t SensorCount = 8;
-uint16_t sensorValues[SensorCount];
-const uint8_t EmitterPin = 10; // NOVO: Pino de controle do LED IR
+unsigned int sensorValues[SensorCount];
+float erroAcumulado = 0;
 
-// ATUALIZADO: Construtor moderno da QTR
-QTRSensors qtr;
+// pinos dos sensores (ajuste conforme seu hardware)
+QTRSensorsRC qtr((unsigned char[]){2, 0, 4, 5, 6, 7, 8, 9}, SensorCount, 2000, 10);
 
-// --- Configurações do Robô ---
-int VELOCIDADE_BASE = 150; // Velocidade base (0-255)
-// (O seu 'velocidade = 50' era muito baixo, ajuste conforme necessário)
 
-// --- Constantes PID (AJUSTE ESTES VALORES!) ---
-// Comece com Kp, depois adicione Kd, e por último Ki se precisar
-double Kp = 0.1;  // Ganho Proporcional (Reage ao erro atual)
-double Ki = 0.0;  // Ganho Integral (Corrige erros persistentes)
-double Kd = 0.05; // Ganho Derivativo (Prevê erros futuros, amortece)
+//constantes PID
 
-// --- Variáveis do PID ---
-double setpoint = 3500;   // Objetivo: 3500 (centro de 8 sensores)
-double termoIntegral = 0;
-double erroAnterior = 0;
-unsigned long tempoAnterior = 0;
+double Ki = 0.05;
+double Kp = 220;
+double Kd = 0;
 
-// --- Limites do PID (Anti-Windup e Saturação) ---
-double MAX_INTEGRAL = 200; // Limite do termo integral
-double MIN_INTEGRAL = -200;
-int MAX_OUTPUT = 255;      // Limite do PWM (não mude)
-int MIN_OUTPUT = 0;        // Limite do PWM (não mude)
+// configuracoes PID
+
+/*Para fazer o setpoint acredito que tera que atualizar sempre no void loop
+  Assim posso manter o carro sempre centrado
+*/
 
 
 void setup() {
   Serial.begin(9600);
   delay(500);
 
+
   pinMode(PINO_IN1, OUTPUT);
   pinMode(PINO_IN3, OUTPUT);
-
-  // NOVO: Configuração dos pinos dos sensores (sintaxe moderna)
-  qtr.setSensorPins((const uint8_t[]){2, 0, 4, 5, 6, 7, 8, 9}, SensorCount);
-  qtr.setEmitterPin(EmitterPin);
-  qtr.setTimeout(2000);
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH); // LED aceso durante calibração
 
-  // Calibração
-  Serial.println("Calibrando... Mova o robô sobre a linha.");
+  // Calibração — mova o sensor sobre o preto e o branco
+  Serial.println("Calibrando...");
   for (uint16_t i = 0; i < 400; i++) {
     qtr.calibrate();
     delay(5);
   }
+
   digitalWrite(LED_BUILTIN, LOW); // calibração terminada
 
-  // Mostrar valores calibrados (sintaxe atualizada)
-  Serial.println("Calibracao minima:");
+  // Mostrar valores mínimos e máximos calibrados
+  Serial.println("Calibração mínima:");
   for (uint8_t i = 0; i < SensorCount; i++) {
-    // ATUALIZADO: 'calibrationOn.minimum'
-    Serial.print(qtr.calibrationOn.minimum[i]);
+    Serial.print(qtr.calibratedMinimumOn[i]);
     Serial.print(' ');
   }
   Serial.println();
 
-  Serial.println("Calibracao maxima:");
+  Serial.println("Calibração máxima:");
   for (uint8_t i = 0; i < SensorCount; i++) {
-    // ATUALIZADO: 'calibrationOn.maximum'
-    Serial.print(qtr.calibrationOn.maximum[i]);
+    Serial.print(qtr.calibratedMaximumOn[i]);
     Serial.print(' ');
   }
   Serial.println();
   Serial.println();
-  delay(1000);
-
-  // NOVO: Inicia o cronômetro do PID
-  tempoAnterior = millis();
+  delay(500);
 }
 
 void loop() {
-  
-  // ATUALIZADO: Use 'readLineBlack' (para linha preta)
-  // ou 'readLineWhite' (para linha branca)
-  unsigned int position = qtr.readLineBlack(sensorValues);
+  // Lê posição da linha (0–7000)
+  unsigned int position = qtr.readLine(sensorValues);
 
-  // (Descomente para debug, mas saiba que Serial.print deixa o loop lento)
+  // imprime os valores dos 8 sensores corretamente
+  for (uint8_t i = 0; i < SensorCount; i++) {
+    Serial.print("Sensor ");
+    Serial.print(i);          // <-- aqui é o índice correto!
+    Serial.print(": ");
+    Serial.print(sensorValues[i]);
+    Serial.print('\t');
+  }
+  Serial.println("\n");
   /*
-  Serial.print("Posicao: ");
-  Serial.println(position);
-  */
-
-  // #################################################
-  // ##            INÍCIO DO CÁLCULO PID            ##
-  // #################################################
-  // Esta seção substitui seu cálculo 'pound' e 'correcao'
-
-  // 1. Cálculo do Tempo (dt)
-  unsigned long agora = millis();
-  double dt = (agora - tempoAnterior) / 1000.0; // dt em segundos
-
-  // 2. Cálculo do Erro
-  // 'position' (0-7000) é o nosso 'input'
-  // 'setpoint' (3500) é o centro
-  double erro = setpoint - position;
-
-  // 3. Termo P
-  double termoP = Kp * erro;
-
-  // 4. Termo I (com Anti-Windup)
-  termoIntegral += erro * dt;
-  if (termoIntegral > MAX_INTEGRAL) {
-    termoIntegral = MAX_INTEGRAL;
-  } else if (termoIntegral < MIN_INTEGRAL) {
-    termoIntegral = MIN_INTEGRAL;
+  int pound = 0;
+  for(int i=1; i<5; i++){
+    pound -= sensorValues[i-1]* i;
   }
+  for(int i=1; i<5; i++){
+    pound += sensorValues[i+3]* i;
+  }*/
 
-  // 5. Termo D (Cuidado com dt=0 na primeira volta)
-  double derivada = 0;
-  if (dt > 0) {
-    derivada = (erro - erroAnterior) / dt;
+  float target = 0;
+  for(int i=0; i<8; i++){
+    if(i<4){
+      target -= (4 - i) * sensorValues[i];
+    } else {
+      target += (i - 3) * sensorValues[i];
+    }
   }
-  double termoD = Kd * derivada;
+  target = target/10000;
+  //Dessa maneira, target passa a assumir o range (-1, 1)
 
-  // 6. Saída Final (Correção)
-  // O 'output' é a *correção* que vamos aplicar aos motores
-  double output = termoP + (Ki * termoIntegral) + termoD;
+  erroAcumulado += target;
 
-  // 7. Atualização das Memórias
-  erroAnterior = erro;
-  tempoAnterior = agora;
-
-  // #################################################
-  // ##           FIM DO CÁLCULO PID                ##
-  // #################################################
-
-  // --- Controle dos Motores ---
-
-  // Calcula a velocidade de cada motor
-  // A 'output' (correção) é somada em um lado e subtraída do outro
-  int velEsquerda = VELOCIDADE_BASE + output;
-  int velDireita  = VELOCIDADE_BASE - output;
-
-  // Saturação da Saída (limita a velocidade final nos limites do PWM)
-  velEsquerda = constrain(velEsquerda, MIN_OUTPUT, MAX_OUTPUT);
-  velDireita  = constrain(velDireita, MIN_OUTPUT, MAX_OUTPUT);
-
-  // Aplica a saída
-  // (ATENÇÃO: Seu código original fazia 'velEsquerda-100', o que
-  // provavelmente estava errado. Esta é a forma padrão.)
-  analogWrite(PINO_IN1, velEsquerda);
-  analogWrite(PINO_IN3, velDireita);
+  if (erroAcumulado > 10) erroAcumulado = 10;
+  if (erroAcumulado < -10) erroAcumulado = -10;
   
-  // REMOVIDO: O 'delay(50)' foi removido.
-  // O PID funciona melhor calculando o 'dt' real.
+  int correcao = Kp * target + Ki * erroAcumulado;
+  int velocidade = 180;
+
+  int velEsquerda = velocidade - correcao;
+  int velDireita  = velocidade + correcao;
+
+  velEsquerda = constrain(velEsquerda, 0, 255);
+  velDireita  = constrain(velDireita, 0, 238);
+
+  analogWrite(PINO_IN1, velEsquerda);
+  analogWrite(PINO_IN4, velDireita);
 }
