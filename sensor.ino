@@ -15,7 +15,7 @@ QTRSensorsRC qtr((unsigned char[]){2, 0, 4, 5, 6, 7, 8, 9}, SensorCount, 2000, 1
 
 //constantes PID
 
-double Ki = 0.05;
+double Ki = 1;
 double Kp = 220;
 double Kd = 0;
 
@@ -89,12 +89,12 @@ void loop() {
   float target = 0;
   for(int i=0; i<8; i++){
     if(i<4){
-      target -= (4 - i) * sensorValues[i];
+      target -= (3 - i) * sensorValues[i];
     } else {
-      target += (i - 3) * sensorValues[i];
+      target += (i - 4) * sensorValues[i];
     }
   }
-  target = target/10000;
+  target = target/6000;
   //Dessa maneira, target passa a assumir o range (-1, 1)
 
   erroAcumulado += target;
@@ -105,8 +105,8 @@ void loop() {
   int correcao = Kp * target + Ki * erroAcumulado;
   int velocidade = 180;
 
-  int velEsquerda = velocidade - correcao;
-  int velDireita  = velocidade + correcao;
+  int velEsquerda = velocidade - (2*correcao);
+  int velDireita  = velocidade + (2*correcao);
 
   velEsquerda = constrain(velEsquerda, 0, 255);
   velDireita  = constrain(velDireita, 0, 238);
